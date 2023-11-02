@@ -12,9 +12,7 @@ var (
 	mockCfgDir   = "/tmp"
 	mockCfgName  = "cfg_test"
 	mockCfgPath  = filepath.Join(mockCfgDir, fmt.Sprintf("%s.%s", mockCfgName, "yaml"))
-	mockTemplate = `# OPSP platform.
-# conf template for service: agent
-
+	mockTemplate = `
 agent:
   # encode protocol. optional: json, msgpack, default: msgpack
   encode: {{encode|default:"msgpack"}}
@@ -40,9 +38,7 @@ func testWrite(t *testing.T) {
 	assert := A.New(t)
 
 	var (
-		expect = `# OPSP platform.
-# conf template for service: agent
-
+		expect = `
 agent:
   # encode protocol. optional: json, msgpack, default: msgpack
   encode: msgpack
