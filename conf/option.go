@@ -3,8 +3,8 @@ package conf
 import (
 	"fmt"
 	"github.com/fsnotify/fsnotify"
+	"github.com/lafrinte/nops/fs"
 	"github.com/rs/zerolog/log"
-	"nops/fs"
 	"path/filepath"
 	"strings"
 )

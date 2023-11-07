@@ -3,9 +3,9 @@ package conf
 import (
 	"fmt"
 	"github.com/flosch/pongo2"
+	"github.com/lafrinte/nops/fs"
+	"github.com/lafrinte/nops/str"
 	"github.com/spf13/viper"
-	"nops/fs"
-	"nops/str"
 	"regexp"
 	"time"
 )

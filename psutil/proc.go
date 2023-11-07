@@ -3,8 +3,8 @@ package psutil
 import (
 	"context"
 	"fmt"
+	"github.com/lafrinte/nops/fs"
 	psutil "github.com/shirou/gopsutil/v3/process"
-	"nops/fs"
 	"strconv"
 	"strings"
 	"time"
