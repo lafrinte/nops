@@ -5,13 +5,15 @@ import (
 	"math"
 )
 
-var GlobalPoolName = "nops"
+var (
+	GlobalPoolName = "nops"
+)
 
 func init() {
 	if err := gopool.RegisterPool(
 		gopool.NewPool(
 			GlobalPoolName,
-			math.MaxInt32,
+			int32((1<<14)-1),
 			gopool.NewConfig(),
 		),
 	); err != nil {
@@ -38,4 +40,8 @@ func New(name string) gopool.Pool {
 	_ = gopool.RegisterPool(pool)
 
 	return pool
+}
+
+func DefaultPool() gopool.Pool {
+	return gopool.GetPool(GlobalPoolName)
 }

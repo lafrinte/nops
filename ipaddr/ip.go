@@ -3,17 +3,25 @@ package ipaddr
 import (
 	"net"
 	"strings"
+	"sync"
+)
+
+var (
+	staticIP string
+	once     sync.Once
 )
 
 // GetIP return one public IP
 func GetIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:53")
-	if err != nil {
-		return ""
-	}
+	once.Do(func() {
+		conn, err := net.Dial("udp", "8.8.8.8:53")
+		if err == nil {
+			localAddr := conn.LocalAddr().(*net.UDPAddr)
+			staticIP = strings.Split(localAddr.String(), ":")[0]
+		}
+	})
 
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-	return strings.Split(localAddr.String(), ":")[0]
+	return staticIP
 }
 
 func GetInnelIP() string {
