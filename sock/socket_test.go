@@ -17,7 +17,7 @@ func TestNewAndOption(t *testing.T) {
 		WithCtx(context.Background()),
 		WithSndhwm(1000),
 		WithType("PUB"),
-		WithEndpoint("inproc://xsub-test"),
+		WithEndpoint("inproc://test"),
 		WithExitWaitTimeout(time.Second*10),
 		WithRetryAttempts(3),
 		WithRetryInterval(time.Second),
@@ -28,13 +28,15 @@ func TestNewAndOption(t *testing.T) {
 		WithHeartbeatIvlSec(5),
 		WithHeartbeatTimoutSec(10),
 		WithHeartbeatTTLSec(20),
-		WithServiceRegisterEndpoint("inproc://register-test"),
+		WithSendTimeoutSec(3),
+		WithRecvTimeoutSec(3),
+		WithInChannel(make(chan []byte, 1000)),
+		WithOutChannel(make(chan []byte, 100)),
 	)
 
 	assert.Equal(soc.Sndhwm, 1000)
 	assert.Equal(soc.Type, goczmq.Pub)
-	assert.Equal(soc.Endpoint, "inproc://xsub-test")
-	assert.Equal(soc.ServiceRegisterEndpoint, "inproc://register-test")
+	assert.Equal(soc.Endpoint, "inproc://sub")
 	assert.Equal(soc.TcpKeepAliveIdleSec, int16(15))
 	assert.Equal(soc.TcpKeepAliveCnt, int8(3))
 	assert.Equal(soc.EnableTcpKeepAlive, true)
@@ -43,35 +45,261 @@ func TestNewAndOption(t *testing.T) {
 	assert.Equal(cap(soc.retryCh), 1000)
 }
 
-func TestSimplePub(t *testing.T) {
+func TestBroadcastBindOnPub(t *testing.T) {
 	assert := A.New(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*2500)
 	defer cancel()
 
-	endpoint := "inproc://broadcast"
-	soc := New(
+	endpoint := "inproc://pub"
+
+	pub := New(
 		WithCtx(ctx),
-		WithType("PUB"),
+		WithType("Pub"),
 		WithEndpoint(endpoint),
-		WithMaxBufferSize(4000),
+		WithMaxBufferSize(1000),
 	)
 
-	go soc.Publisher()
+	in := pub.GetInChannel()
+	go pub.Publisher()
 
-	go func() {
-		in := soc.GetInChannel()
-		for i := 0; i < 4000; i++ {
-			in <- []byte(strconv.Itoa(i))
-		}
-	}()
+	sub1 := New(
+		WithCtx(ctx),
+		WithType("Sub"),
+		WithEndpoint(endpoint),
+		WithAttach(),
+		WithMaxBufferSize(1000),
+	)
+
+	out1 := sub1.GetOutChannel()
+	go sub1.Consumer()
+
+	sub2 := New(
+		WithCtx(ctx),
+		WithType("Sub"),
+		WithEndpoint(endpoint),
+		WithAttach(),
+		WithMaxBufferSize(1000),
+	)
+
+	out2 := sub2.GetOutChannel()
+	go sub2.Consumer()
+
+	time.Sleep(time.Millisecond * 200) // wait sub1 and sub2 connection
+	for i := 0; i < 1000; i++ {
+		in <- []byte(strconv.Itoa(i))
+	}
 
 	<-ctx.Done()
 
-	assert.Equal(soc.GetInCount(), 0)
+	assert.Equal(len(in), 0)
+	assert.Equal(len(out1), 1000)
+	assert.Equal(len(out2), 1000)
 }
 
-func TestPubWithTypePanic(t *testing.T) {
+func TestBroadcastBindOnSub(t *testing.T) {
+	assert := A.New(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*2500)
+	defer cancel()
+
+	endpoint := "inproc://sub"
+
+	sub := New(
+		WithCtx(ctx),
+		WithType("Sub"),
+		WithEndpoint(endpoint),
+		WithMaxBufferSize(2000),
+	)
+
+	out := sub.GetOutChannel()
+	go sub.Consumer()
+
+	pub1 := New(
+		WithCtx(ctx),
+		WithType("Pub"),
+		WithEndpoint(endpoint),
+		WithAttach(),
+		WithMaxBufferSize(1000),
+	)
+
+	in1 := pub1.GetInChannel()
+	go pub1.Publisher()
+
+	pub2 := New(
+		WithCtx(ctx),
+		WithType("Pub"),
+		WithEndpoint(endpoint),
+		WithAttach(),
+		WithMaxBufferSize(1000),
+	)
+
+	in2 := pub2.GetInChannel()
+	go pub2.Publisher()
+
+	time.Sleep(time.Millisecond * 200) // wait sub1 and sub2 connection // wait sub1 and sub2 connection
+	for i := 0; i < 1000; i++ {
+		in1 <- []byte(strconv.Itoa(i))
+		in2 <- []byte(strconv.Itoa(i))
+	}
+
+	<-ctx.Done()
+
+	assert.Equal(len(in1), 0)
+	assert.Equal(len(in2), 0)
+	assert.Equal(len(out), 2000)
+}
+
+func TestQueueBindOnPush(t *testing.T) {
+	assert := A.New(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*2500)
+	defer cancel()
+
+	endpoint := "inproc://sub"
+
+	push := New(
+		WithCtx(ctx),
+		WithType("Push"),
+		WithEndpoint(endpoint),
+		WithMaxBufferSize(1000),
+	)
+
+	in := push.GetInChannel()
+	go push.Publisher()
+
+	pull1 := New(
+		WithCtx(ctx),
+		WithType("Pull"),
+		WithEndpoint(endpoint),
+		WithAttach(),
+		WithMaxBufferSize(1000),
+	)
+
+	out1 := pull1.GetOutChannel()
+	go pull1.Consumer()
+
+	pull2 := New(
+		WithCtx(ctx),
+		WithType("Pull"),
+		WithEndpoint(endpoint),
+		WithAttach(),
+		WithMaxBufferSize(1000),
+	)
+
+	out2 := pull2.GetOutChannel()
+	go pull2.Consumer()
+
+	time.Sleep(time.Millisecond * 200) // wait sub1 and sub2 connection
+	for i := 0; i < 1000; i++ {
+		in <- []byte(strconv.Itoa(i))
+	}
+
+	<-ctx.Done()
+
+	assert.Equal(len(in), 0)
+	assert.Equal(len(out1)+len(out2), 1000)
+}
+
+func TestQueueBindOnPull(t *testing.T) {
+	assert := A.New(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*2500)
+	defer cancel()
+
+	endpoint := "inproc://sub"
+
+	pull := New(
+		WithCtx(ctx),
+		WithType("Pull"),
+		WithEndpoint(endpoint),
+		WithMaxBufferSize(2000),
+	)
+
+	out := pull.GetOutChannel()
+	go pull.Consumer()
+
+	push1 := New(
+		WithCtx(ctx),
+		WithType("Push"),
+		WithEndpoint(endpoint),
+		WithAttach(),
+		WithMaxBufferSize(1000),
+	)
+
+	in1 := push1.GetInChannel()
+	go push1.Publisher()
+
+	push2 := New(
+		WithCtx(ctx),
+		WithType("Push"),
+		WithEndpoint(endpoint),
+		WithAttach(),
+		WithMaxBufferSize(1000),
+	)
+
+	in2 := push2.GetInChannel()
+	go push2.Publisher()
+
+	time.Sleep(time.Millisecond * 200) // wait sub1 and sub2 connection
+	for i := 0; i < 1000; i++ {
+		in1 <- []byte(strconv.Itoa(i))
+		in2 <- []byte(strconv.Itoa(i))
+	}
+
+	<-ctx.Done()
+
+	assert.Equal(len(in1), 0)
+	assert.Equal(len(in2), 0)
+	assert.Equal(len(out), 2000)
+}
+
+func TestReqRep(t *testing.T) {
+	assert := A.New(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*2500)
+	defer cancel()
+
+	endpoint := "inproc://rep"
+
+	rep := New(
+		WithCtx(ctx),
+		WithType("Rep"),
+		WithEndpoint(endpoint),
+	)
+
+	go rep.Responser()
+
+	req := New(
+		WithCtx(ctx),
+		WithType("Req"),
+		WithAttach(),
+		WithEndpoint(endpoint),
+	)
+
+	go req.Requester()
+
+	qIn := req.GetInChannel()
+	qOut := req.GetOutChannel()
+	pIn := rep.GetInChannel()
+	pOut := rep.GetOutChannel()
+
+	requestMsg := []byte("hello")
+	qIn <- requestMsg
+
+	msg := <-pOut
+	assert.Equal(msg, requestMsg)
+
+	responseMsg := []byte("world")
+	pIn <- responseMsg
+
+	msg = <-qOut
+	assert.Equal(msg, responseMsg)
+
+	<-ctx.Done()
+}
+
+func TestPublisherWithTypePanic(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {
 			expectErr := "publisher only enables by 'type': Push/Pub"
@@ -90,44 +318,7 @@ func TestPubWithTypePanic(t *testing.T) {
 	pub.Publisher()
 }
 
-func TestSimpleSub(t *testing.T) {
-	assert := A.New(t)
-
-	endpoint := "inproc://xsub-test"
-	pub := goczmq.NewSock(goczmq.Pub)
-	if _, err := pub.Bind(endpoint); err != nil {
-		panic(err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
-	defer cancel()
-
-	soc := New(
-		WithCtx(ctx),
-		WithSndhwm(10000),
-		WithType("Sub"),
-		WithEndpoint("inproc://xsub-test"),
-		WithAttach(),
-		WithMaxBufferSize(4000),
-	)
-
-	go soc.Consumer()
-
-	time.Sleep(time.Second)
-
-	for i := 0; i < 4000; i++ {
-		time.Sleep(time.Nanosecond) // mock real world situation
-		if err := pub.SendFrame([]byte(strconv.Itoa(i)), goczmq.FlagNone); err != nil {
-			panic(err)
-		}
-	}
-
-	<-ctx.Done()
-
-	assert.Equal(soc.GetOutCount(), 4000)
-}
-
-func TestSubWithTypePanic(t *testing.T) {
+func TestConsumerWithTypePanic(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {
 			expectErr := "consumer only enables by 'type': Pull/Sub"
@@ -144,79 +335,4 @@ func TestSubWithTypePanic(t *testing.T) {
 	)
 
 	soc.Consumer()
-}
-
-func TestSimplePush(t *testing.T) {
-	assert := A.New(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
-	defer cancel()
-
-	endpoint := "inproc://push"
-	soc := New(
-		WithCtx(ctx),
-		WithType("Push"),
-		WithEndpoint(endpoint),
-		WithMaxBufferSize(1000),
-	)
-
-	in := soc.GetInChannel()
-	for i := 0; i < 1000; i++ {
-		in <- []byte(strconv.Itoa(i))
-	}
-
-	go soc.Publisher()
-
-	<-ctx.Done()
-
-	assert.Equal(soc.GetOutCount(), 0)
-}
-
-func TestSimplePull(t *testing.T) {
-	assert := A.New(t)
-
-	endpoint := "inproc://xpull-test"
-	push := goczmq.NewSock(goczmq.Push)
-	if _, err := push.Bind(endpoint); err != nil {
-		panic(err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
-	defer cancel()
-
-	soc := New(
-		WithCtx(ctx),
-		WithSndhwm(10000),
-		WithType("Pull"),
-		WithEndpoint(endpoint),
-		WithAttach(),
-		WithMaxBufferSize(1000),
-	)
-
-	go soc.Consumer()
-
-	time.Sleep(time.Second)
-
-	for i := 0; i < 1000; i++ {
-		time.Sleep(time.Nanosecond) // mock real world situation
-		if err := push.SendFrame([]byte(strconv.Itoa(i)), goczmq.FlagNone); err != nil {
-			panic(err)
-		}
-	}
-
-	<-ctx.Done()
-
-	assert.Equal(soc.GetOutCount(), 1000)
-}
-
-func TestReconnect(t *testing.T) {
-
-	endpoint := "tcp://0.0.0.0:5555"
-	pub := goczmq.NewSock(goczmq.Pub)
-	if _, err := pub.Bind(endpoint); err != nil {
-		t.Error(err)
-	}
-
-	pub.SetReconnectIvl(100)
-
 }

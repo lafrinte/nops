@@ -15,12 +15,14 @@ const (
 	DefaultMaxBufferSize          = 10000
 	DefaultTcpKeepAliveCnt        = -1
 	DefaultTcpKeepAliveIdleSec    = -1
-	DefaultHeartbeatTTLSec        = 30 // unit: millsecond
-	DefaultHeartbeatTimeoutSec    = 5  // unit: millsecond
-	DefaultHeartbeatIvlSec        = 15 // unit: millsecond
+	DefaultHeartbeatTTLSec        = 30 // unit: millisecond
+	DefaultHeartbeatTimeoutSec    = 5  // unit: millisecond
+	DefaultHeartbeatIvlSec        = 15 // unit: millisecond
 	DefaultReconnectIvlMillSec    = 100
 	DefaultReconnectIvlMaxMillSec = 0
 	DefaultSndhwm                 = 10000
+	DefaultSendTimeoutSec         = 0
+	DefaultRecvTimeoutSec         = 0
 )
 
 type Option func(s *Sock)
@@ -40,10 +42,6 @@ func WithType(val string) Option {
 			s.Type = goczmq.Sub
 
 		// enable in next pr
-		//case "REQ":
-		//	s.Type = goczmq.Req
-		//case "REP":
-		//	s.Type = goczmq.Rep
 		//case "ROUTER":
 		//	s.Type = goczmq.Router
 		//case "DEALER":
@@ -52,6 +50,10 @@ func WithType(val string) Option {
 			s.Type = goczmq.Push
 		case "PULL":
 			s.Type = goczmq.Pull
+		case "REQ":
+			s.Type = goczmq.Req
+		case "REP":
+			s.Type = goczmq.Rep
 		default:
 			msg := fmt.Sprintf("wrone socket mode: %s", strings.ToUpper(val))
 			panic(fmt.Errorf(msg))
@@ -143,8 +145,26 @@ func WithHeartbeatTTLSec(val int) Option {
 	}
 }
 
-func WithServiceRegisterEndpoint(val string) Option {
+func WithSendTimeoutSec(val int) Option {
 	return func(s *Sock) {
-		s.ServiceRegisterEndpoint = val
+		s.SendTimeoutSec = uint16(val)
+	}
+}
+
+func WithRecvTimeoutSec(val int) Option {
+	return func(s *Sock) {
+		s.RecvTimeoutSec = uint16(val)
+	}
+}
+
+func WithInChannel(val chan []byte) Option {
+	return func(s *Sock) {
+		s.in = val
+	}
+}
+
+func WithOutChannel(val chan []byte) Option {
+	return func(s *Sock) {
+		s.out = val
 	}
 }

@@ -9,6 +9,10 @@ message TaskCount {
 	int32 In = 1 [json_name = "in"];
 	int32 Out = 2 [json_name = "out"];
 	int32 Retry = 3 [json_name = "retry"];
+	uint64 SendMsgCount = 6 [json_name = "send_msg_count"];
+	uint64 RecvMsgCount = 7 [json_name = "recv_msg_count"];
+	uint64 DropMsgCount = 8 [json_name = "drop_msg_count"];
+	uint64 BufferSize = 9 [json_name = "buffer_size"];
 }
 
 message RegisterMsg {

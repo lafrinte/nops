@@ -4,10 +4,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/lafrinte/nops/atom"
-	"github.com/lafrinte/nops/iputil"
 	"github.com/lafrinte/nops/timer"
 	"github.com/zeromq/goczmq"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	"reflect"
 	"runtime"
 	"time"
@@ -19,12 +17,19 @@ type RetryMsg struct {
 	MaxRetry uint8
 }
 
+// Retry get the retry state. if the retry time reach the max retry times, Retry will return false.
 func (r *RetryMsg) Retry() bool {
 	return r.MaxRetry > r.retry
 }
 
+// IterRetryTimes used to iter the retry times
 func (r *RetryMsg) IterRetryTimes() {
 	r.retry++
+}
+
+// GetRetryTimes gets msg current retry times
+func (r *RetryMsg) GetRetryTimes() uint8 {
+	return r.retry
 }
 
 func NewRetryMsg(msg []byte, retry uint8) *RetryMsg {
@@ -71,41 +76,55 @@ type Sock struct {
 	RetryInterval time.Duration
 	RetryAttempts uint8
 
+	//
+	sendMsgCount uint64
+	dropMsgCount uint64
+	recvMsgCount uint64
+
 	// safe destroy args
 	ExitWaitTimeout time.Duration
 
-	// register endpoint
-	ServiceRegisterEndpoint string
+	SendTimeoutSec uint16
+	RecvTimeoutSec uint16
 }
 
 // bind binds socket on endpoint
 func (s *Sock) bind() (*goczmq.Sock, error) {
-	soc := goczmq.NewSock(s.Type)
+	soc := s.setOptions()
 	if _, err := soc.Bind(s.Endpoint); err != nil {
 		return nil, err
 	}
 
-	soc.SetSndhwm(s.Sndhwm)
-
-	return s.setOptions(soc), nil
+	return soc, nil
 }
 
 // connect makes connection to endpoint
 func (s *Sock) connect() (*goczmq.Sock, error) {
-	soc := goczmq.NewSock(s.Type)
+	soc := s.setOptions()
 	if err := soc.Connect(s.Endpoint); err != nil {
 		return nil, err
 	}
 
-	soc.SetSndhwm(s.Sndhwm)
-
-	return s.setOptions(soc), nil
+	return soc, nil
 }
 
 // setOptions sets socket tcp and heartbeat option
-func (s *Sock) setOptions(soc *goczmq.Sock) *goczmq.Sock {
+func (s *Sock) setOptions() *goczmq.Sock {
+	soc := goczmq.NewSock(s.Type)
+
+	soc.SetSndhwm(s.Sndhwm)
+
 	if soc.GetType() == goczmq.Sub {
+		log.Debug().Msg("sub mode will set default subscribe to ''")
 		soc.SetSubscribe("")
+	}
+
+	if s.SendTimeoutSec > 0 {
+		soc.SetSndtimeo(int(s.SendTimeoutSec * 1000))
+	}
+
+	if s.RecvTimeoutSec > 0 {
+		soc.SetRcvtimeo(int(s.SendTimeoutSec * 1000))
 	}
 
 	if s.EnableTcpKeepAlive {
@@ -170,20 +189,6 @@ func (s *Sock) GetRetryCount() int {
 	return len(s.retryCh)
 }
 
-// GetBufferInfoMsg return msg count in every channel on sock in string
-func (s *Sock) GetBufferInfoMsg() string {
-	return fmt.Sprintf("in: [%d], out: [%d], retry: [%d]", s.GetInCount(), s.GetOutCount(), s.GetRetryCount())
-}
-
-// GetBufferInfoDict return msg count in every channel on sock in dict
-func (s *Sock) GetBufferInfoDict() map[string]int {
-	return map[string]int{
-		"in":    s.GetInCount(),
-		"out":   s.GetOutCount(),
-		"retry": s.GetRetryCount(),
-	}
-}
-
 // IsAutoRestart gets the value of DisableRestart
 func (s *Sock) IsAutoRestart() bool {
 	return s.DisableRestart.True()
@@ -204,69 +209,95 @@ func (s *Sock) GetOutChannel() chan []byte {
 	return s.out
 }
 
-func (s *Sock) CloseCh() {
+func (s *Sock) release() {
+
 	close(s.in)
 	close(s.out)
 	close(s.retryCh)
-}
 
-// CloseSock calls Destroy and set soc to nil
-func (s *Sock) CloseSock() {
 	if s.soc != nil {
 		s.soc.Destroy()
 		s.soc = nil
 	}
 }
 
-// sendFrame tries sending msg and puts msg into retry channel when any error occured
-func (s *Sock) sendFrame(sock *goczmq.Sock, msg []byte, retry bool) {
+// sendFrame tries sending msg and puts msg into retry channel when any error occurred
+func (s *Sock) sendFrame(sock *goczmq.Sock, msg []byte, retry bool) error {
 	/* goczmq.Sock will panic in C while receiving or sending frame on a destroyed socket,
 	   wrapped in thread will transfer thread-panic to main thread and be caught
 	*/
-	Pool.CtxGo(s.ctx, func() {
-		if err := sock.SendFrame(msg, goczmq.FlagNone); err != nil && retry {
+	if sock == nil {
+		log.Error().Err(fmt.Errorf("sock pointer is nil")).Msg("sock may closed, exit now")
+		return fmt.Errorf("sock pointer is nil")
+	}
+
+	err := sock.SendFrame(msg, goczmq.FlagNone)
+	if err != nil {
+		log.Error().Err(err).Bytes("data", msg).Msg("failed to send")
+
+		if retry {
+			log.Info().Bytes("data", msg).Msg("retry send")
 			s.retryCh <- NewRetryMsg(msg, s.RetryAttempts)
+
+			// not return error while msg can retry
+			return nil
 		}
-	})
+
+		s.dropMsgCount++
+
+		return fmt.Errorf("failed to send")
+	}
+
+	s.sendMsgCount++
+
+	return nil
 }
 
 // recvFrame tries receiving msg and puts into out channel
-func (s *Sock) recvFrame(sock *goczmq.Sock) {
+func (s *Sock) recvFrame(sock *goczmq.Sock) error {
 	/* goczmq.Sock will panic in C while receiving or sending frame on a destroyed socket,
 	   wrapped in thread will transfer thread-panic to main thread and be caught
 	*/
-	Pool.CtxGo(s.ctx, func() {
-		for {
-			if buf, _, err := sock.RecvFrame(); err == nil {
-				s.out <- buf
-			} else {
-				// prevent call recv for send after socket be destroyed
-				if err == goczmq.ErrRecvFrameAfterDestroy {
-					panic(err)
-				}
-			}
+	for {
+		if sock == nil {
+			log.Error().Err(fmt.Errorf("sock pointer is nil")).Msg("sock may closed, exit now")
+			return fmt.Errorf("sock pointer is nil")
 		}
-	})
+
+		buf, _, err := sock.RecvFrame()
+		if err != nil {
+			if err == goczmq.ErrRecvFrameAfterDestroy {
+				log.Error().Err(err).Msg("call RecvFrame after sock been destroyed")
+				panic(err)
+			}
+
+			log.Error().Err(err).Msg("RecvFrame failed")
+
+			continue
+		}
+
+		s.out <- buf
+		s.recvMsgCount++
+	}
 }
 
 // retry tries to publish msg in retry channel and re-puts into retry channel when any error occured
 func (s *Sock) retry(sock *goczmq.Sock, msg *RetryMsg) {
 	if msg.Retry() {
+		if err := sock.SendFrame(msg.Msg, goczmq.FlagNone); err != nil {
+			msg.IterRetryTimes()
 
-		Pool.CtxGo(s.ctx, func() {
-			if err := sock.SendFrame(msg.Msg, goczmq.FlagNone); err != nil {
-				msg.IterRetryTimes()
-
-				t := timer.AcquireTimer(s.RetryInterval)
-				if !t.Stop() {
-					<-t.C
-				}
-
-				timer.ReleaseTimer(t)
-
-				s.retryCh <- msg
+			log.Error().Err(err).Bytes("data", msg.Msg).Msgf("retry SendFrame failed the %d time", msg.GetRetryTimes())
+			t := timer.AcquireTimer(s.RetryInterval)
+			if !t.Stop() {
+				<-t.C
 			}
-		})
+
+			timer.ReleaseTimer(t)
+
+			s.retryCh <- msg
+			return
+		}
 	}
 }
 
@@ -275,25 +306,24 @@ func (s *Sock) Release() error {
 	s.StopAutoRestart()
 
 	if s.EmptyBuffer() {
-		s.CloseSock()
+		s.release()
 		return nil
 	}
 
 	exitWaitTimeout := time.After(s.ExitWaitTimeout)
 	for {
 		if s.EmptyBuffer() {
-			s.CloseCh()
-			s.CloseSock()
+			s.release()
 			return nil
 		}
 
 		select {
 		case <-exitWaitTimeout:
-			s.CloseCh()
-			s.CloseSock()
-			return fmt.Errorf(s.GetBufferInfoMsg())
+			s.release()
+			msg := fmt.Sprintf("msg lost: in [%d] out [%d] retry [%d]", s.GetInCount(), s.GetOutCount(), s.GetRetryCount())
+			return fmt.Errorf(msg)
 		case buf := <-s.in:
-			s.sendFrame(s.soc, buf, true)
+			_ = s.sendFrame(s.soc, buf, true)
 		case r := <-s.retryCh:
 			s.retry(s.soc, r)
 		}
@@ -345,25 +375,26 @@ func (s *Sock) Publisher() {
 
 	_, err := s.Attach()
 	if err != nil {
+		log.Panic().Err(err).Msg("panic on socket Attach")
 		panic(err)
 	}
 
 	for {
 		select {
 		case <-s.ctx.Done():
-			err := s.Release()
-			if err != nil {
+			if err := s.Release(); err != nil {
 				log.Error().Str("func", "Publisher").Msgf("Release err: %s", err.Error())
 			}
 			return
 		case b := <-s.in:
-			s.sendFrame(s.soc, b, true)
+			_ = s.sendFrame(s.soc, b, true)
 		case r := <-s.retryCh:
 			s.retry(s.soc, r)
 		}
 	}
 }
 
+// Consumer receive msg from sock and charge into 'out' channel. optional socket type: SUB/PULL
 func (s *Sock) Consumer() {
 	switch s.Type {
 	case goczmq.Pull, goczmq.Sub:
@@ -375,10 +406,11 @@ func (s *Sock) Consumer() {
 
 	_, err := s.Attach()
 	if err != nil {
+		log.Panic().Err(err).Msg("panic on socket Attach")
 		panic(err)
 	}
 
-	s.recvFrame(s.soc)
+	_ = s.recvFrame(s.soc)
 
 	<-s.ctx.Done()
 
@@ -388,53 +420,105 @@ func (s *Sock) Consumer() {
 	}
 }
 
-func (s *Sock) ServiceRegister() {
-	if s.ServiceRegisterEndpoint == "" {
-		log.Warn().Str("func", "ServiceRegister").
-			Msgf("sock has empty 'ServiceRegisterEndpoint' which will skip sending zmq register msg")
-		return
+// Requester send request msg in 'in' channel and save reply msg in 'out' channel
+func (s *Sock) Requester() {
+	switch s.Type {
+	case goczmq.Req:
+	default:
+		panic(fmt.Errorf("requester only enables by 'type': Req"))
 	}
 
-	defer s.recovery(s.Publisher)
+	defer s.recovery(s.Requester)
 
-	soc, err := goczmq.NewReq(s.ServiceRegisterEndpoint)
+	_, err := s.Attach()
 	if err != nil {
+		log.Panic().Err(err).Msg("panic on socket Attach")
 		panic(err)
-	}
-
-	t := time.NewTicker(time.Duration(s.ReconnectIvlMillSec) * time.Millisecond)
-	dt := &RegisterMsg{
-		ID:   s.id,
-		Host: iputil.GetIP(),
-		TaskCount: &TaskCount{
-			In:    int32(s.GetInCount()),
-			Out:   int32(s.GetOutCount()),
-			Retry: int32(s.GetRetryCount()),
-		},
-		SocketType: uint64(s.Type),
 	}
 
 	for {
 		select {
 		case <-s.ctx.Done():
-			t.Stop()
-			soc.Destroy()
+			if err := s.Release(); err != nil {
+				log.Error().Str("func", "Requester").Msgf("Release err: %s", err.Error())
+			}
 			return
-		case <-t.C:
-			Pool.CtxGo(s.ctx, func() {
-				dt.Timestamp = timestamppb.New(time.Now())
-				if b, err := dt.Marshal(); err == nil {
-					if err := soc.SendFrame(b, goczmq.FlagNone); err != nil {
-						t.Stop()
-						panic(err)
-					}
+		case b := <-s.in:
+			/* Sets the timeout for send operation on the socket.
+			   If the value is 0, zmq_send(3) will return immediately, with a EAGAIN error if the message cannot be sent.
+			   If the value is -1, it will block until the message is sent.
+			   For all other values, it will try to send the message for that amount of time before returning with an EAGAIN error
+			*/
+			if err := s.sendFrame(s.soc, b, false); err == nil {
+				/* Sets the timeout for receive operation on the socket. If the value is 0, zmq_recv(3)
+				   will return immediately, with a EAGAIN error if there is no message to receive. If the value is -1,
+				   it will block until a message is available. For all other values,
+				   it will wait for a message for that amount of time before returning with an EAGAIN error.
+				*/
+				reply, _, err := s.soc.RecvFrame()
+				if err != nil {
+					log.Error().Err(err).Msgf("requester get no replay at %s", time.Now())
 
-					if _, _, err := soc.RecvFrame(); err != nil {
-						t.Stop()
-						panic(err)
-					}
+					// charge empty when an error occurred in RecvFrame
+					s.out <- []byte("")
+					return
 				}
-			})
+
+				// block when msg in 'out' has not been consumed.
+				s.out <- reply
+				s.recvMsgCount++
+			}
+
+			// charge empty when an error occurred in sendFrame
+			s.out <- []byte("")
+			s.sendMsgCount++
+		}
+	}
+}
+
+// Responser recharge request msg into 'out' channel and get its response msg from 'in' channel
+func (s *Sock) Responser() {
+	switch s.Type {
+	case goczmq.Rep:
+	default:
+		panic(fmt.Errorf("requester only enables by 'type': Rep"))
+	}
+
+	defer s.recovery(s.Responser)
+
+	_, err := s.Attach()
+	if err != nil {
+		log.Panic().Err(err).Msg("panic on socket Attach")
+		panic(err)
+	}
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			if err := s.Release(); err != nil {
+				log.Error().Str("func", "Responser").Msgf("Release err: %s", err.Error())
+			}
+			return
+		default:
+			/* Sets the timeout for receive operation on the socket. If the value is 0, zmq_recv(3)
+			   will return immediately, with a EAGAIN error if there is no message to receive. If the value is -1,
+			   it will block until a message is available. For all other values,
+			   it will wait for a message for that amount of time before returning with an EAGAIN error.
+			*/
+			if request, _, err := s.soc.RecvFrame(); err == nil {
+				/* Sets the timeout for send operation on the socket.
+				   If the value is 0, zmq_send(3) will return immediately, with a EAGAIN error if the message cannot be sent.
+				   If the value is -1, it will block until the message is sent.
+				   For all other values, it will try to send the message for that amount of time before returning with an EAGAIN error
+				*/
+				s.recvMsgCount++
+
+				s.out <- request
+				response := <-s.in
+				if err := s.sendFrame(s.soc, response, false); err == nil {
+					s.sendMsgCount++
+				}
+			}
 		}
 	}
 }
