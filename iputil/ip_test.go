@@ -7,5 +7,5 @@ func TestGetIP(t *testing.T) {
 }
 
 func TestInternalIp(t *testing.T) {
-	GetInnelIP()
+	GetInnerIP()
 }

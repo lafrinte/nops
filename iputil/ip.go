@@ -24,7 +24,7 @@ func GetIP() string {
 	return staticIP
 }
 
-func GetInnelIP() string {
+func GetInnerIP() string {
 	infs, err := net.Interfaces()
 	if err != nil {
 		return ""
@@ -41,9 +41,9 @@ func GetInnelIP() string {
 		}
 
 		for _, addr := range addrs {
-			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-				if ipnet.IP.To4() != nil {
-					return ipnet.IP.String()
+			if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
+				if ipNet.IP.To4() != nil {
+					return ipNet.IP.String()
 				}
 			}
 		}

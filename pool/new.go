@@ -2,7 +2,6 @@ package pool
 
 import (
 	"github.com/bytedance/gopkg/util/gopool"
-	"math"
 )
 
 var (
@@ -21,9 +20,13 @@ func init() {
 	}
 }
 
-func New(name string) gopool.Pool {
+func New(name string, capacity int32) gopool.Pool {
 	if name == "" {
 		name = GlobalPoolName
+	}
+
+	if capacity == 0 {
+		capacity = int32((1 << 14) - 1)
 	}
 
 	pool := gopool.GetPool(name)
@@ -33,7 +36,7 @@ func New(name string) gopool.Pool {
 
 	pool = gopool.NewPool(
 		GlobalPoolName,
-		math.MaxInt32,
+		capacity,
 		gopool.NewConfig(),
 	)
 

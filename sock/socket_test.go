@@ -43,6 +43,16 @@ func TestNewAndOption(t *testing.T) {
 	assert.Equal(cap(soc.GetInChannel()), 1000)
 	assert.Equal(cap(soc.GetOutChannel()), 0)
 	assert.Equal(cap(soc.retryCh), 1000)
+
+	_ = New(
+		WithType("SUB"),
+		WithEndpoint("inproc://test"),
+	)
+
+	_ = New(
+		WithType("Req"),
+		WithEndpoint("inproc://test"),
+	)
 }
 
 func TestBroadcastBindOnPub(t *testing.T) {
@@ -335,4 +345,42 @@ func TestConsumerWithTypePanic(t *testing.T) {
 	)
 
 	soc.Consumer()
+}
+
+func TestRequesterWithTypePanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			expectErr := "requester only enables by 'type': Req"
+
+			if fmt.Sprintf("%s", r) != expectErr {
+				t.Errorf("no panic raised when calling Requester with type 'pub', got %v", r)
+			}
+		}
+	}()
+	endpoint := "inproc://broadcast"
+	soc := New(
+		WithType("PUB"),
+		WithEndpoint(endpoint),
+	)
+
+	soc.Requester()
+}
+
+func TestResponserWithTypePanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			expectErr := "responser only enables by 'type': Rep"
+
+			if fmt.Sprintf("%s", r) != expectErr {
+				t.Errorf("no panic raised when calling Responser with type 'pub', got %v", r)
+			}
+		}
+	}()
+	endpoint := "inproc://broadcast"
+	soc := New(
+		WithType("PUB"),
+		WithEndpoint(endpoint),
+	)
+
+	soc.Responser()
 }

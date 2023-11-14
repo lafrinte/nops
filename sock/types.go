@@ -358,7 +358,7 @@ func (s *Sock) recovery(f func()) {
 			return
 		}
 
-		// no restart will exit current thread directlly
+		// no restart will exit current thread directly
 		return
 	}
 }
@@ -481,7 +481,7 @@ func (s *Sock) Responser() {
 	switch s.Type {
 	case goczmq.Rep:
 	default:
-		panic(fmt.Errorf("requester only enables by 'type': Rep"))
+		panic(fmt.Errorf("responser only enables by 'type': Rep"))
 	}
 
 	defer s.recovery(s.Responser)
