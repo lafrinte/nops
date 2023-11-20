@@ -10,11 +10,13 @@ require (
 	github.com/gorhill/cronexpr v0.0.0-20180427100037-88b0669f7d75
 	github.com/rs/xid v1.5.0
 	github.com/rs/zerolog v1.31.0
+	github.com/shirou/gopsutil v3.21.11+incompatible
 	github.com/shirou/gopsutil/v3 v3.23.10
 	github.com/spf13/viper v1.17.0
 	github.com/stretchr/testify v1.8.4
 	github.com/yihleego/trie v0.0.0-20220914121334-78377532f78e
 	github.com/zeromq/goczmq v4.1.0+incompatible
+	go.uber.org/automaxprocs v1.5.3
 	google.golang.org/protobuf v1.31.0
 )
 
