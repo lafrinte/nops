@@ -19,6 +19,12 @@ func New(opts ...Option) *Logging {
 		opt(logging)
 	}
 
+	if logging.FileName != "" {
+		if logging.MaxSize == 0 {
+			logging.MaxSize = 100
+		}
+	}
+
 	return logging
 }
 

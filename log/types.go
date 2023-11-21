@@ -93,10 +93,10 @@ func (l *Logging) getHandler() []io.Writer {
 func (l *Logging) FileHandler() io.Writer {
 	return &lumberjack.Logger{
 		Filename:   l.FileName,
-		MaxSize:    500, // megabytes
-		MaxBackups: 3,
-		MaxAge:     28,   // days
-		Compress:   true, // disabled by default
+		MaxSize:    l.MaxSize, // megabytes
+		MaxBackups: l.MaxBackups,
+		MaxAge:     l.MaxAgeInDay, // days
+		Compress:   l.Compress,    // disabled by default
 	}
 }
 
