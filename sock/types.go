@@ -41,7 +41,7 @@ func NewRetryMsg(msg []byte, retry uint8) *RetryMsg {
 }
 
 type Sock struct {
-	id  string
+	ID  string
 	ctx context.Context
 	soc *goczmq.Sock
 
@@ -174,6 +174,11 @@ func (s *Sock) EmptyBuffer() bool {
 	return (len(s.retryCh) + len(s.in) + len(s.out)) == 0
 }
 
+// GetID gets the uniq it of socket
+func (s *Sock) GetID() string {
+	return s.ID
+}
+
 // GetInCount gets msg count int channel 'in'
 func (s *Sock) GetInCount() int {
 	return len(s.in)
@@ -187,6 +192,21 @@ func (s *Sock) GetOutCount() int {
 // GetRetryCount gets msg count int channel 'retryCh'
 func (s *Sock) GetRetryCount() int {
 	return len(s.retryCh)
+}
+
+// GetDropMsgCount gets the total count of msg sock has dropped ever
+func (s *Sock) GetDropMsgCount() uint64 {
+	return s.dropMsgCount
+}
+
+// GetRecvMsgCount gets the total count of msg sock has received
+func (s *Sock) GetRecvMsgCount() uint64 {
+	return s.recvMsgCount
+}
+
+// GetSendMsgCount gets the total count of msg sock has published
+func (s *Sock) GetSendMsgCount() uint64 {
+	return s.sendMsgCount
 }
 
 // IsAutoRestart gets the value of DisableRestart
